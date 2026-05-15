@@ -160,7 +160,7 @@
             
             <div class="map-toggle">
                 <button id="btn-2d" class="active">2D 평면</button>
-                <button id="btn-3d">3D 지구본</button>
+                <button id="btn-3d">3D 입체</button>
             </div>
 
             <!-- 마커 표시 토글 스위치 (초기값: 체크 해제) -->
@@ -757,34 +757,47 @@
         function getCesiumCenter() {
             if (!map3D) return null;
             const windowPosition = new Cesium.Cartesian2(map3D.canvas.clientWidth / 2, map3D.canvas.clientHeight / 2);
-            const pickRay = map3D.camera.getPickRay(windowPosition);
-            const globe = map3D.scene.globe;
-            const pickPosition = globe.pick(pickRay, map3D.scene);
+            // 3D로 비스듬하게 눕혀진 화면 정중앙의 표면 좌표를 정확히 계산
+            const pickPosition = map3D.camera.pickEllipsoid(windowPosition, Cesium.Ellipsoid.MOON);
             
             let lat = 0, lng = 0;
+            let distance = map3D.camera.positionCartographic.height;
+
             if (pickPosition) {
-                const cartographic = globe.ellipsoid.cartesianToCartographic(pickPosition);
+                const cartographic = Cesium.Cartographic.fromCartesian(pickPosition);
                 lat = Cesium.Math.toDegrees(cartographic.latitude);
                 lng = Cesium.Math.toDegrees(cartographic.longitude);
+                // 눕혀진 카메라에서 지표면 중심까지의 직선 거리를 계산
+                distance = Cesium.Cartesian3.distance(map3D.camera.position, pickPosition);
             } else {
                 const cartographic = map3D.camera.positionCartographic;
                 lat = Cesium.Math.toDegrees(cartographic.latitude);
                 lng = Cesium.Math.toDegrees(cartographic.longitude);
             }
-            const height = map3D.camera.positionCartographic.height;
+            
             // 2D 줌 레벨 비율에 맞추어 3D 카메라 기준 높이 변환 시 최대 8.1로 제한
-            const zoom = Math.max(1.8, Math.min(8.1, 10 - Math.log2(height / 35000)));
+            const zoom = Math.max(1.8, Math.min(8.1, 10 - Math.log2(distance / 35000)));
             return { lat, lng, zoom };
         }
 
         function flyTo3D(lat, lng, zoom, instant = false) {
             if (!map3D) return;
-            // 2D 줌 레벨을 3D 높이로 환산 시 충분한 여백 확보를 위해 10000 -> 35000으로 조정
-            const height = 35000 * Math.pow(2, 10 - zoom);
-            const destination = Cesium.Cartesian3.fromDegrees(lng, lat, height, Cesium.Ellipsoid.MOON);
-            const orientation = { heading: 0, pitch: Cesium.Math.toRadians(-90), roll: 0 };
-            if (instant) map3D.camera.setView({ destination, orientation });
-            else map3D.camera.flyTo({ destination, orientation, duration: 1.5 });
+            const range = 35000 * Math.pow(2, 10 - zoom);
+            
+            // 3D 입체감을 주되 너무 눕지 않도록 카메라 피치(Pitch)를 -70도로 조정
+            const center = Cesium.Cartesian3.fromDegrees(lng, lat, 0, Cesium.Ellipsoid.MOON);
+            const heading = Cesium.Math.toRadians(0);
+            const pitch = Cesium.Math.toRadians(-70); // -55도에서 -70도로 수정
+
+            if (instant) {
+                map3D.camera.lookAt(center, new Cesium.HeadingPitchRange(heading, pitch, range));
+                map3D.camera.lookAtTransform(Cesium.Matrix4.IDENTITY); // 뷰 고정 해제하여 이후 마우스 조작 가능하게 유지
+            } else {
+                map3D.camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, 0), {
+                    offset: new Cesium.HeadingPitchRange(heading, pitch, range),
+                    duration: 1.5
+                });
+            }
         }
 
         function setupNav() {
